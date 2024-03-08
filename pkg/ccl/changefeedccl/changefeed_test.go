@@ -2849,6 +2849,34 @@ func TestChangefeedSchemaChangeBackfillScope(t *testing.T) {
 	}
 }
 
+func TestChangefeedPrintMsg(t *testing.T) {
+	options := makeOptions()
+	testServer, cleanupServer := makeServerWithOptions(t, options)
+	feedFactory, cleanupSink := makeFeedFactoryWithOptions(t, "kafka", testServer.Server, testServer.DB, options)
+	feedFactory = maybeUseExternalConnection(feedFactory, testServer.DB, "kafka", options, t)
+	defer cleanupServer()
+	defer cleanupSink()
+	sqlDB := sqlutils.MakeSQLRunner(testServer.DB)
+	sqlDB.Exec(t, `CREATE TABLE friends (a INT PRIMARY KEY, b int, c string)`)
+	sqlDB.Exec(t, `INSERT INTO friends VALUES (0, 1, '1')`)
+	sqlDB.Exec(t, `INSERT INTO friends VALUES (1, 2, '2')`)
+	f := feed(t, feedFactory, `CREATE CHANGEFEED FOR friends WITH updated, schema_change_policy = nobackfill`)
+	sqlDB.Exec(t, `ALTER TABLE friends DROP COLUMN b`)
+	sqlDB.Exec(t, `INSERT INTO friends VALUES (2, '3')`)
+	actual, _ := readNextMessages(context.Background(), f, 3)
+
+	var actualFormatted []string
+	for _, m := range actual {
+		actualFormatted = append(actualFormatted, fmt.Sprintf(`%s: %s->%s`, m.Topic, m.Key, m.Value))
+	}
+	sort.Strings(actualFormatted)
+	fmt.Println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+	for _, msg := range actualFormatted {
+		fmt.Println(msg)
+	}
+	fmt.Println(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+}
+
 // Regression test for #34314
 func TestChangefeedAfterSchemaChangeBackfill(t *testing.T) {
 	defer leaktest.AfterTest(t)()
